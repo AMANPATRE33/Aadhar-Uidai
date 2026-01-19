@@ -1,3 +1,9 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
 
 @st.cache_data
 def load_sample_data():
@@ -11,13 +17,6 @@ def load_sample_data():
 
 forecast_df = load_sample_data()
 
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import numpy as np
 
 # --------------------------- CSS STYLING --------------------------- 
 st.markdown("""
@@ -308,4 +307,5 @@ st.markdown("""
     🚀 Built for UIDAI Hackathon | AI-Driven Biometric Service Planning | Jan 2026
 </div>
 """, unsafe_allow_html=True)
+
 
