@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-
+import io
 
 # --------------------------- CSS STYLING --------------------------- 
 st.markdown("""
@@ -46,6 +46,14 @@ st.markdown("""
         border-radius: 12px !important;
         box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important;
     }
+    .upload-area {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        border: 2px dashed #1f77b4;
+        text-align: center;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,101 +64,116 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --------------------------- DATA UPLOAD --------------------------- 
-st.sidebar.header("📁 Upload Data Files")
-
-forecast_file = st.sidebar.file_uploader("Upload forecast_output.csv", type="csv", key="forecast")
-merged_file = st.sidebar.file_uploader("Upload biometric_merged.csv", type="csv", key="merged")
-
-if forecast_file is not None and merged_file is not None:
-    # Load with caching for speed
-    @st.cache_data
-    def load_data(forecast_file, merged_file):
+# --------------------------- MANUAL UPLOAD DATA --------------------------- 
+def load_uploaded_data(forecast_file, merged_file):
+    """Process uploaded CSV files with full data validation"""
+    if forecast_file is not None and merged_file is not None:
+        # Read CSV files
         forecast_df = pd.read_csv(forecast_file)
         merged_df = pd.read_csv(merged_file)
         
-        # Fix dates (your original logic)
+        # Fix dates
         forecast_df['ds'] = pd.to_datetime(forecast_df['ds'])
+        
         if 'date' in merged_df.columns:
             merged_df['date'] = pd.to_datetime(merged_df['date'], dayfirst=True)
+            DATE_COL = 'date'
         elif 'ds' in merged_df.columns:
             merged_df['ds'] = pd.to_datetime(merged_df['ds'])
+            DATE_COL = 'ds'
+        else:
+            st.error("❌ No date column found in biometric dataset. Expected 'date' or 'ds'.")
+            st.stop()
         
-        # Add missing columns (your original logic)
+        # Add missing columns for forecast
         if 'monthly_staff_cost' not in forecast_df.columns:
-            forecast_df['monthly_staff_cost'] = forecast_df['staff_needed'] * 25000
+            if 'staff_needed' in forecast_df.columns:
+                forecast_df['monthly_staff_cost'] = forecast_df['staff_needed'] * 25000
+            else:
+                st.warning("⚠️ 'staff_needed' column missing. Using default cost calculation.")
+                forecast_df['staff_needed'] = (forecast_df['yhat'] * 0.001).astype(int)
+                forecast_df['monthly_staff_cost'] = forecast_df['staff_needed'] * 25000
+        
         if 'best_case' not in forecast_df.columns:
             forecast_df['best_case'] = forecast_df['yhat'] * 0.9
             forecast_df['expected'] = forecast_df['yhat']
             forecast_df['worst_case'] = forecast_df['yhat'] * 1.2
         
-        merged_df['total_updates'] = merged_df['bio_age_5_17'] + merged_df['bio_age_17_']
-        return forecast_df, merged_df
+        # Ensure required columns exist
+        if 'demand_risk' not in forecast_df.columns:
+            forecast_df['demand_risk'] = pd.cut(forecast_df['yhat'], 
+                                              bins=[0, forecast_df['yhat'].quantile(0.5), forecast_df['yhat'].max()], 
+                                              labels=['Low', 'High'])
+        
+        if 'recommended_action' not in forecast_df.columns:
+            forecast_df['recommended_action'] = np.where(forecast_df['demand_risk'] == 'High', 
+                                                       'Recruit Now', 'Monitor')
+        
+        # Historical total updates
+        if 'bio_age_5_17' in merged_df.columns and 'bio_age_17_' in merged_df.columns:
+            merged_df['total_updates'] = merged_df['bio_age_5_17'] + merged_df['bio_age_17_']
+        else:
+            st.warning("⚠️ Age group columns missing. Using total_updates if available.")
+            if 'total_updates' not in merged_df.columns:
+                merged_df['total_updates'] = merged_df.iloc[:, 1:].sum(axis=1)
+        
+        st.success(f"✅ Loaded {len(forecast_df):,} forecast records & {len(merged_df):,} biometric records")
+        return forecast_df, merged_df, DATE_COL
     
-    forecast_df, merged_df = load_data(forecast_file, merged_file)
-    
-    st.sidebar.success("✅ Files loaded successfully!")
-    st.success(f"Loaded {len(forecast_df)} forecast records & {len(merged_df)} biometric records")
-    
-else:
-    st.info("👆 Please upload both CSV files in the sidebar")
-    st.stop()
+    return None, None, None
 
-
-# --------------------------- LOAD DATA --------------------------- 
-@st.cache_data
-def load_data():
-    forecast_df = pd.read_csv(FORECAST_PATH)
-    merged_df = pd.read_csv(MERGED_PATH)
-    
-    # Fix dates
-    forecast_df['ds'] = pd.to_datetime(forecast_df['ds'])
-    
-    if 'date' in merged_df.columns:
-        merged_df['date'] = pd.to_datetime(merged_df['date'], dayfirst=True)
-        DATE_COL = 'date'
-    elif 'ds' in merged_df.columns:
-        merged_df['ds'] = pd.to_datetime(merged_df['ds'])
-        DATE_COL = 'ds'
-    else:
-        st.error("No date column found.")
-        st.stop()
-    
-    # Add missing columns
-    if 'monthly_staff_cost' not in forecast_df.columns:
-        forecast_df['monthly_staff_cost'] = forecast_df['staff_needed'] * 25000
-    
-    if 'best_case' not in forecast_df.columns:
-        forecast_df['best_case'] = forecast_df['yhat'] * 0.9
-        forecast_df['expected'] = forecast_df['yhat']
-        forecast_df['worst_case'] = forecast_df['yhat'] * 1.2
-    
-    # Historical total updates
-    merged_df['total_updates'] = merged_df['bio_age_5_17'] + merged_df['bio_age_17_']
-    
-    return forecast_df, merged_df, DATE_COL
-
-forecast_df, merged_df, DATE_COL = load_data()
-
-# --------------------------- SIDEBAR --------------------------- 
+# --------------------------- SIDEBAR UPLOAD --------------------------- 
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/0/06/UIDAI_Logo.png", width=200)
-    st.title("🔍 Controls")
+    st.title("📁 Upload Datasets")
     
-    # Filters
-    states = st.multiselect(
-        "Select States", 
-        options=sorted(merged_df['state'].unique()), 
-        default=sorted(merged_df['state'].unique())[:5]
-    )
+    st.markdown('<div class="upload-area">', unsafe_allow_html=True)
+    forecast_file = st.file_uploader("**Forecast Output CSV**", type="csv", 
+                                   help="forecast_output.csv from your UIDAI project")
+    merged_file = st.file_uploader("**Biometric Merged CSV**", type="csv", 
+                                 help="biometric_merged.csv from your UIDAI project")
+    st.markdown('</div>', unsafe_allow_html=True)
     
-    age_groups = st.multiselect(
-        "Age Groups", 
-        options=['5-17 years', '18+ years'],
-        default=['5-17 years', '18+ years']
-    )
-    
-    st.info("👆 Use filters to explore data interactively")
+    if forecast_file is not None and merged_file is not None:
+        # Preview files
+        st.subheader("📋 Data Preview")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.dataframe(pd.read_csv(forecast_file).head(), use_container_width=True)
+        with col2:
+            st.dataframe(pd.read_csv(merged_file).head(), use_container_width=True)
+
+# --------------------------- MAIN DATA LOADING --------------------------- 
+@st.cache_data
+def cached_load(forecast_file, merged_file):
+    return load_uploaded_data(forecast_file, merged_file)
+
+if 'forecast_file' not in st.session_state:
+    st.session_state.forecast_file = None
+if 'merged_file' not in st.session_state:
+    st.session_state.merged_file = None
+
+# Update session state when files change
+if forecast_file != st.session_state.forecast_file or merged_file != st.session_state.merged_file:
+    st.session_state.forecast_file = forecast_file
+    st.session_state.merged_file = merged_file
+    st.cache_data.clear()
+
+forecast_df, merged_df, DATE_COL = cached_load(st.session_state.forecast_file, st.session_state.merged_file)
+
+if forecast_df is None or merged_df is None:
+    st.markdown('<div class="upload-area">', unsafe_allow_html=True)
+    st.markdown("""
+        <h3>👆 Upload Both CSV Files to Start</h3>
+        <p><strong>Required Files:</strong></p>
+        <ul>
+            <li>📊 <code>forecast_output.csv</code></li>
+            <li>📈 <code>biometric_merged.csv</code></li>
+        </ul>
+        <p>Files will be processed automatically once uploaded!</p>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
 
 # --------------------------- HERO HEADER --------------------------- 
 col1, col2 = st.columns([3,1])
@@ -171,34 +194,49 @@ st.markdown('<h2 class="sub-header">📊 Executive Summary</h2>', unsafe_allow_h
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    with st.container():
-        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-        avg_demand = int(forecast_df['yhat'].mean())
-        st.metric("Avg Monthly Demand", f"{avg_demand:,}")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    avg_demand = int(forecast_df['yhat'].mean())
+    st.metric("Avg Monthly Demand", f"{avg_demand:,}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
-    with st.container():
-        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-        peak_demand = int(forecast_df['yhat'].max())
-        st.metric("Peak Demand", f"{peak_demand:,}")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    peak_demand = int(forecast_df['yhat'].max())
+    st.metric("Peak Demand", f"{peak_demand:,}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col3:
-    with st.container():
-        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-        high_risk = (forecast_df['demand_risk'] == "High").sum()
-        st.metric("High-Risk Months", high_risk)
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    high_risk = (forecast_df['demand_risk'] == "High").sum()
+    st.metric("High-Risk Months", high_risk)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col4:
-    with st.container():
-        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-        total_cost = int(forecast_df['monthly_staff_cost'].sum())
-        st.metric("Total Staff Cost", f"₹{total_cost:,}")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    total_cost = int(forecast_df['monthly_staff_cost'].sum())
+    st.metric("Total Staff Cost", f"₹{total_cost:,}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# --------------------------- TABS --------------------------- 
+# --------------------------- SIDEBAR FILTERS (Now uses uploaded data) --------------------------- 
+with st.sidebar:
+    st.subheader("🔍 Filters")
+    
+    if merged_df is not None and 'state' in merged_df.columns:
+        states = st.multiselect(
+            "Select States", 
+            options=sorted(merged_df['state'].unique()), 
+            default=sorted(merged_df['state'].unique())[:5]
+        )
+    else:
+        states = []
+    
+    age_groups = st.multiselect(
+        "Age Groups", 
+        options=['5-17 years', '18+ years'],
+        default=['5-17 years', '18+ years']
+    )
+
+# --------------------------- TABS (All your original content remains the same) --------------------------- 
 tab1, tab2, tab3, tab4 = st.tabs(["📈 Forecast", "📋 Planning", "🏛️ Historical", "⚙️ Scenarios"])
 
 with tab1:
@@ -313,17 +351,18 @@ with col2:
     if age_groups:
         age_data = {}
         for group in age_groups:
-            if group == '5-17 years':
+            if group == '5-17 years' and 'bio_age_5_17' in filtered_merged.columns:
                 age_data[group] = filtered_merged['bio_age_5_17'].sum()
-            else:
+            elif group == '18+ years' and 'bio_age_17_' in filtered_merged.columns:
                 age_data[group] = filtered_merged['bio_age_17_'].sum()
         
-        fig_age_bar = px.bar(
-            pd.DataFrame(list(age_data.items()), columns=['Age Group', 'Updates']),
-            x='Updates', y='Age Group', orientation='h',
-            title="Filtered Age Analysis"
-        )
-        st.plotly_chart(fig_age_bar, use_container_width=True)
+        if age_data:
+            fig_age_bar = px.bar(
+                pd.DataFrame(list(age_data.items()), columns=['Age Group', 'Updates']),
+                x='Updates', y='Age Group', orientation='h',
+                title="Filtered Age Analysis"
+            )
+            st.plotly_chart(fig_age_bar, use_container_width=True)
 
 # --------------------------- FOOTER --------------------------- 
 st.markdown("---")
@@ -332,6 +371,3 @@ st.markdown("""
     🚀 Built for UIDAI Hackathon | AI-Driven Biometric Service Planning | Jan 2026
 </div>
 """, unsafe_allow_html=True)
-
-
-
