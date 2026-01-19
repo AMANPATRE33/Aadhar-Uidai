@@ -1,3 +1,17 @@
+
+@st.cache_data
+def load_sample_data():
+    # Embed your CSVs as base64 or use sample data
+    sample_forecast = pd.DataFrame({
+        'ds': pd.date_range('2026-01-01', periods=12, freq='M'),
+        'yhat': np.random.randint(50000, 150000, 12),
+        # ... other columns
+    })
+    return sample_forecast
+
+forecast_df = load_sample_data()
+
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -294,3 +308,4 @@ st.markdown("""
     🚀 Built for UIDAI Hackathon | AI-Driven Biometric Service Planning | Jan 2026
 </div>
 """, unsafe_allow_html=True)
+
