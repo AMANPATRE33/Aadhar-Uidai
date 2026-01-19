@@ -4,4 +4,8 @@ pandas
 prophet
 scikit-learn 
 matplotlib
+streamlit==1.38.0
+pandas==2.2.2
+plotly==5.24.0
+numpy==2.1.1
 
