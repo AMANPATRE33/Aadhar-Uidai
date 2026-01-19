@@ -5,18 +5,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 
-@st.cache_data
-def load_sample_data():
-    # Embed your CSVs as base64 or use sample data
-    sample_forecast = pd.DataFrame({
-        'ds': pd.date_range('2026-01-01', periods=12, freq='M'),
-        'yhat': np.random.randint(50000, 150000, 12),
-        # ... other columns
-    })
-    return sample_forecast
-
-forecast_df = load_sample_data()
-
 
 # --------------------------- CSS STYLING --------------------------- 
 st.markdown("""
@@ -68,9 +56,46 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --------------------------- PATHS --------------------------- 
-FORECAST_PATH = r"C:\Users\22010\Downloads\uidai\api_data_aadhar_biometric\forecast_output.csv"
-MERGED_PATH   = r"C:\Users\22010\Downloads\uidai\api_data_aadhar_biometric\biometric_merged.csv"
+# --------------------------- DATA UPLOAD --------------------------- 
+st.sidebar.header("📁 Upload Data Files")
+
+forecast_file = st.sidebar.file_uploader("Upload forecast_output.csv", type="csv", key="forecast")
+merged_file = st.sidebar.file_uploader("Upload biometric_merged.csv", type="csv", key="merged")
+
+if forecast_file is not None and merged_file is not None:
+    # Load with caching for speed
+    @st.cache_data
+    def load_data(forecast_file, merged_file):
+        forecast_df = pd.read_csv(forecast_file)
+        merged_df = pd.read_csv(merged_file)
+        
+        # Fix dates (your original logic)
+        forecast_df['ds'] = pd.to_datetime(forecast_df['ds'])
+        if 'date' in merged_df.columns:
+            merged_df['date'] = pd.to_datetime(merged_df['date'], dayfirst=True)
+        elif 'ds' in merged_df.columns:
+            merged_df['ds'] = pd.to_datetime(merged_df['ds'])
+        
+        # Add missing columns (your original logic)
+        if 'monthly_staff_cost' not in forecast_df.columns:
+            forecast_df['monthly_staff_cost'] = forecast_df['staff_needed'] * 25000
+        if 'best_case' not in forecast_df.columns:
+            forecast_df['best_case'] = forecast_df['yhat'] * 0.9
+            forecast_df['expected'] = forecast_df['yhat']
+            forecast_df['worst_case'] = forecast_df['yhat'] * 1.2
+        
+        merged_df['total_updates'] = merged_df['bio_age_5_17'] + merged_df['bio_age_17_']
+        return forecast_df, merged_df
+    
+    forecast_df, merged_df = load_data(forecast_file, merged_file)
+    
+    st.sidebar.success("✅ Files loaded successfully!")
+    st.success(f"Loaded {len(forecast_df)} forecast records & {len(merged_df)} biometric records")
+    
+else:
+    st.info("👆 Please upload both CSV files in the sidebar")
+    st.stop()
+
 
 # --------------------------- LOAD DATA --------------------------- 
 @st.cache_data
@@ -307,5 +332,6 @@ st.markdown("""
     🚀 Built for UIDAI Hackathon | AI-Driven Biometric Service Planning | Jan 2026
 </div>
 """, unsafe_allow_html=True)
+
 
 
